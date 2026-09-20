@@ -15,6 +15,9 @@ export interface LexMigrationArchives {
 
 @Injectable({ providedIn: 'root' })
 export class LexMigrationService {
+  // Lex V1 and V2 use different names for some built-in slot types. This map
+  // keeps those compatibility rules in one place instead of scattering if/else
+  // checks throughout the slot conversion loop.
   private readonly lexV1ToV2SlotTypes: Record<string, string> = {
     "AMAZON.NUMBER": "AMAZON.Number",
     "AMAZON.StreetAddress": "AMAZON.StreetName",
@@ -35,6 +38,9 @@ export class LexMigrationService {
   async generateArchives(lexV1FileContent: any, description: string): Promise<LexMigrationArchives> {
     const zip = new JSZip();
     const zipRouter = new JSZip();
+
+    // These values are scoped to a single generation run. Keeping them local
+    // prevents stale Lambda mappings from leaking between multiple uploads.
     const intentList: string[] = [];
     const intentLambdaList: Record<string, string | null> = {};
     let fallbackIntentName: string | null = "";
@@ -45,8 +51,11 @@ export class LexMigrationService {
     const intentsPath = `${basePath}/Intents`;
     const slotTypesPath = `${basePath}/SlotTypes`;
 
+    // Lex import packages require a manifest at the root of the ZIP.
     zip.file('Manifest.json', JSON.stringify({ "metaData": { "schemaVersion": "1", "fileFormat": "LexJson", "resourceType": "BOT" } }, null, 2));
 
+    // Bot-level configuration. Some values are currently fixed defaults and can
+    // be expanded later to preserve more source-bot settings.
     const botJson = {
       name: botName,
       description,
@@ -65,6 +74,8 @@ export class LexMigrationService {
       "nluConfidenceThreshold": 0.4
     }, null, 2));
 
+    // Convert Lex V1 custom slot types into the Lex V2 SlotType.json structure.
+    // Custom names are trimmed because Lex V2 has stricter name length limits.
     const slotTypes = lexV1FileContent.resource.slotTypes;
     if (slotTypes?.length) {
       slotTypes.forEach((slotType: any) => {
@@ -101,6 +112,8 @@ export class LexMigrationService {
         let intentClosingSetting: any = {};
         let successNextStep: any = {};
 
+        // Capture the fallback Lambda so the generated router has a default
+        // target when Lex V2 invokes the fallback intent.
         if (intent.parentIntentSignature == "AMAZON.FallbackIntent") {
           if (intent?.fulfillmentActivity?.codeHook) {
             const arn = intent.fulfillmentActivity.codeHook.uri;
@@ -111,6 +124,9 @@ export class LexMigrationService {
           const intentFolder = `${intentsPath}/${intent.name}`;
           const slotFolder = `${intentFolder}/Slots`;
           let responseCardInlowPrioritySlot = false;
+
+          // Lex V2 expects slot priorities in the intent file while each slot
+          // definition lives in its own folder under the intent.
           const slotsPriority = (intent.slots || []).map((s: any) => ({ priority: s.priority, slotName: s.name }));
           let lowestPrioritySlot: any = null;
           if (slotsPriority.length > 0) {
@@ -124,6 +140,8 @@ export class LexMigrationService {
           }
 
           (intent.slots || []).forEach((slot: any) => {
+            // If the final slot has a response card, route fulfillment success
+            // back to that slot so users still see the button choices.
             if (slot.name == lowestPrioritySlot) {
               if (slot.valueElicitationPrompt?.responseCard) {
                 responseCardInlowPrioritySlot = true;
@@ -134,6 +152,9 @@ export class LexMigrationService {
             if (!originalName.startsWith("AMAZON")) {
               trimmedName = originalName.substring(0, 24);
             }
+
+            // Slot.json contains the prompt, retry behavior, and slot capture
+            // settings Lex V2 needs to elicit this value.
             const slotJson: any = {
               name: slot.name,
               identifier: '',
@@ -235,6 +256,8 @@ export class LexMigrationService {
             }
 
             if (slot.valueElicitationPrompt?.responseCard) {
+              // Lex V1 response cards are stored as JSON strings. Convert them
+              // into Lex V2 image response card message groups.
               const messageList = this.convertButtonResponseCard(slot.valueElicitationPrompt?.responseCard);
               messageList.forEach((msgList: any) => {
                 slotJson["valueElicitationSetting"]["promptSpecification"]["messageGroupsList"].push(msgList);
@@ -245,6 +268,8 @@ export class LexMigrationService {
           });
 
           if (intent.fulfillmentActivity && intent.fulfillmentActivity.type == "CodeHook") {
+            // Fulfillment code hooks are preserved by routing the Lex V2 event
+            // through the generated Lambda adapter.
             if (responseCardInlowPrioritySlot) {
               successNextStep = {
                 "sessionAttributes": null,
@@ -340,6 +365,8 @@ export class LexMigrationService {
           }
 
           if (intent.dialogCodeHook) {
+            // Dialog hooks also require the Lambda router because existing
+            // handlers generally expect Lex V1-style request/response payloads.
             dialogCodeHook = {
               enabled: true
             }
@@ -355,6 +382,8 @@ export class LexMigrationService {
           }
 
           if (intent.conclusionStatement) {
+            // Closing statements become Lex V2 closing responses. Response card
+            // buttons are appended as additional message groups when present.
             intentClosingSetting = {
               isActive: true,
               nextStep: {
@@ -397,6 +426,8 @@ export class LexMigrationService {
             intentClosingSetting = null;
           }
 
+          // Intent.json ties together utterances, hooks, closing behavior, and
+          // slot priority metadata for this migrated intent.
           const intentJson: any = {
             name: intent.name || '',
             identifier: null,
@@ -423,6 +454,8 @@ export class LexMigrationService {
 
       const fallbackFolder = `${intentsPath}/FallbackIntent`;
 
+      // Fallback and Lambda helper artifacts are maintained separately because
+      // they are large static templates compared with the per-bot conversion.
       zip.file(`${fallbackFolder}/Intent.json`, JSON.stringify(createFallbackIntentJson(), null, 2));
       zip.file(`${fallbackFolder}/ConversationFlow.json`, JSON.stringify(createFallbackConversationFlowJson(), null, 2));
 
@@ -435,6 +468,7 @@ export class LexMigrationService {
       console.warn('[Intents] No intents found.');
     }
 
+    // Generate browser blobs so the component can save both ZIP files locally.
     const lexZip = await zip.generateAsync({ type: 'blob' });
     const lambdaZip = await zipRouter.generateAsync({ type: 'blob' });
 
@@ -442,6 +476,7 @@ export class LexMigrationService {
   }
 
   private defaultNextStep(type: any) {
+    // Helper for repeated Lex V2 next-step objects.
     return {
       sessionAttributes: null,
       dialogAction: {
@@ -460,6 +495,8 @@ export class LexMigrationService {
       const card = JSON.parse(responseCardString);
       const buttons = card.genericAttachments || [];
 
+      // Lex V2 limits response-card button groups, so cap the generated message
+      // groups and buttons to keep the import payload valid.
       buttons.forEach((buttonList: any, index: number) => {
         if (index < 4) {
           const allBtn = buttonList.buttons.slice(0, 5);
@@ -494,6 +531,7 @@ export class LexMigrationService {
   }
 
   private getFunctionNameFromArn(arn: any) {
+    // Lambda mappings only need the function name portion of the ARN.
     const prefix = "function:";
     const index = arn.indexOf(prefix);
     if (index === -1) {

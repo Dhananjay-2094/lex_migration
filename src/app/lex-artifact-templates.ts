@@ -1,4 +1,8 @@
+// Static artifact factories live here to keep the migration service focused on
+// transforming the uploaded bot, not maintaining large JSON/Python templates.
+
 export function createFallbackIntentJson() {
+  // Lex V2 import packages need an explicit fallback intent definition.
   return {
     "name": "FallbackIntent",
     "identifier": "FALLBCKINT",
@@ -35,6 +39,8 @@ export function createFallbackIntentJson() {
 }
 
 export function createFallbackConversationFlowJson() {
+  // ConversationFlow.json controls how the Lex V2 console visualizes fallback
+  // flow between start, fulfillment, and end blocks.
   return {
     "intentName": "FallbackIntent",
     "identifier": "",
@@ -145,6 +151,8 @@ export function createLambdaRouterSource(
   intentList: unknown[],
   fallbackIntentName: string | null
 ) {
+  // The generated router lets migrated Lex V2 bots continue invoking existing
+  // Lex V1 Lambda handlers by converting request and response payloads.
   return `
       import json
       import boto3
@@ -196,6 +204,8 @@ export function createLambdaRouterSource(
 }
 
 export function createLexV2V1ConversionSource() {
+  // Helper Python bundled with the router Lambda. It converts Lex V2 events to
+  // Lex V1-style events before invocation, then maps V1 responses back to V2.
   return `def convert_v2_to_v1_input(event):
     # Initialize basic V1 structure
     print("before conversion :",event)
@@ -402,6 +412,7 @@ def convert_v1_to_v2_response(v1_response, original_v2_event):
 }
 
 function endConversationNextStep() {
+  // Shared fallback fulfillment branches all end the conversation.
   return {
     "sessionAttributes": {},
     "dialogAction": {

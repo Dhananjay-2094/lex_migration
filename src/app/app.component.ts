@@ -11,6 +11,9 @@ import { LexMigrationService } from './lex-migration.service';
 export class AppComponent {
   title = 'lex_migration';
   description = "";
+
+  // Holds the parsed Lex V1 export. The migration service expects the original
+  // AWS export shape so it can preserve intent, slot, and Lambda configuration.
   lexV1FileContent: any;
   fileName = "";
   isGenerating = false;
@@ -22,6 +25,8 @@ export class AppComponent {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Parse the selected export immediately so generation can stay fully local
+    // in the browser without uploading the bot definition anywhere.
     const reader = new FileReader();
     reader.onload = () => {
       try {
@@ -48,6 +53,8 @@ export class AppComponent {
     this.statusMessage = "Generating Lex V2 and Lambda ZIP files...";
 
     try {
+      // The service returns both deliverables: the Lex V2 import ZIP and the
+      // Lambda router ZIP used to keep existing Lex V1 Lambda handlers working.
       const archives = await this.lexMigrationService.generateArchives(this.lexV1FileContent, this.description);
       await this.saveWithPrompt(archives.lexZip, `${archives.botName}_Lex.zip`);
       await this.saveWithPrompt(archives.lambdaZip, `${archives.botName}_Lambda.zip`);
@@ -58,6 +65,8 @@ export class AppComponent {
   }
 
   async saveWithPrompt(blob: Blob, fileName: string) {
+    // Chromium browsers support a native save dialog. Other browsers fall back
+    // to a normal download link so the app remains usable outside Chrome/Edge.
     if ('showSaveFilePicker' in window) {
       try {
         const handle = await (window as any).showSaveFilePicker({
@@ -83,6 +92,8 @@ export class AppComponent {
   }
 
   private downloadBlob(blob: Blob, fileName: string) {
+    // Temporary object URLs let us download generated ZIP blobs without sending
+    // them to a server.
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
