@@ -1,0 +1,44 @@
+<main class="page">
+  <section class="migration-panel">
+    <header class="panel-header">
+      <div>
+        <p class="eyebrow">AWS Lex migration</p>
+        <h1>Lex V1 to V2 converter</h1>
+      </div>
+      <span class="status-pill">Local JSON tool</span>
+    </header>
+
+    <div class="form" aria-label="Lex migration controls">
+      <label class="field">
+        <span>Bot description</span>
+        <input
+          type="text"
+          [(ngModel)]="description"
+          placeholder="Optional bot description"
+        />
+      </label>
+
+      <label class="file-drop">
+        <input type="file" (change)="uploadLexV1Json($event)" accept=".json" />
+        <span class="file-icon">JSON</span>
+        <span class="file-copy">
+          <strong>{{ fileName || 'Choose Lex V1 export' }}</strong>
+          <small>{{ fileName ? 'Ready for conversion' : 'Upload a .json bot export file' }}</small>
+        </span>
+      </label>
+
+      <button
+        class="generate-button"
+        type="button"
+        (click)="generateLexV2Zip()"
+        [disabled]="!lexV1FileContent || isGenerating"
+      >
+        {{ isGenerating ? 'Generating...' : 'Generate ZIP files' }}
+      </button>
+
+      @if (statusMessage) {
+        <p class="status-message">{{ statusMessage }}</p>
+      }
+    </div>
+  </section>
+</main>
